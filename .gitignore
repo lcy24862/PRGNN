@@ -1,0 +1,17 @@
+# Ignore NIFTI files
+*.nii
+*.nii.gz
+
+# Ignore models folder
+models/
+template/
+folds/
+
+# Ignore pycache
+__pycache__/
+
+# Ignore excel files
+*.xlsx
+
+# Matlab files
+*.m
