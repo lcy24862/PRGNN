@@ -28,29 +28,13 @@ class FDG(Dataset):
         """
         
         self.df = df
-        if args.dataset == 'FDG':
-            self.labeldict = {'NC': 0, 'AD':1, 'LBD':2, 'PSP':3}
-            if 'PRGNN' in args.model:
-                self.base = '/media/nvme1/Daesung_FDG/FDG/3_spatial_aal/'
-            else:
-                self.base = '/nas/07_Team_Brain/FDG/3_spatial_96/'
-                # self.base = '/media/nvme1/Daesung_FDG/FDG/3_spatial_aal/' # 0220_ResNet34 랑
-                
-        if args.dataset == 'FBB':
-            self.labeldict = {0: 0, 1: 1}
-            self.df['imageID'] = self.df['imageID'].astype(str)
-
-            if 'PRGNN' in args.model:
-                self.base = '/nas/07_Team_Brain/FBB/3_spatial_aal/'
-            else:
-                # self.base = '/nas/07_Team_Brain/FBB/3_spatial_aal/'
-                self.base = '/nas/07_Team_Brain/FBB/3_spatial_96/'
-                
+        self.labeldict = {'NC': 0, 'AD':1, 'LBD':2, 'PSP':3}
+        self.base = '/media/nvme1/Daesung_FDG/FDG/3_spatial_aal/'
         self.train = train
         
         self.transform = Compose(
         [
-            RandFlip(prob=0.2, spatial_axis=0), # Axial 을 뒤집자,
+            RandFlip(prob=0.2, spatial_axis=0),
             ToTensor()
         ])
 
@@ -98,9 +82,9 @@ def collate_fn(batch):
 
 def get_loader(args, fold, num_classes, batch_size=32, num_workers=0):
 
-    train_df = pd.read_csv(f'/media/storage2/Daesung/MICCAI/folds_{args.dataset}/fold_{fold}_train.csv')
-    val_df = pd.read_csv(f'/media/storage2/Daesung/MICCAI/folds_{args.dataset}/fold_{fold}_val.csv')
-    test_df = pd.read_csv(f'/media/storage2/Daesung/MICCAI/folds_{args.dataset}/fold_{fold}_test.csv')
+    train_df = pd.read_csv(f'/media/storage2/Daesung/deprecated/MICCAI/folds_FDG/fold_{fold}_train.csv')
+    val_df = pd.read_csv(f'/media/storage2/Daesung/deprecated/MICCAI/folds_FDG/fold_{fold}_val.csv')
+    test_df = pd.read_csv(f'/media/storage2/Daesung/deprecated/MICCAI/folds_FDG/fold_{fold}_test.csv')
 
     train_ds = FDG(args, train_df, train=True, num_classes=num_classes)  
     val_ds = FDG(args, val_df, train=False, num_classes=num_classes)

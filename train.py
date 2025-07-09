@@ -14,19 +14,24 @@ from model import get_model
 
 def get_args_parser():
     parser = argparse.ArgumentParser('FDG Classification', add_help=False)
+
+    ################ Critical arguments ################
+    parser.add_argument('--roi_mask', default='template/AAL_reduced_mask.nii', type=str)
+    parser.add_argument('--num_classes', default=4, type=int)
+    
+    ####################################################
+    
     parser.add_argument('--batch_size', default=8, type=int,
                         help='Per GPU batch size')
     parser.add_argument('--epochs', default=100, type=int)
-    parser.add_argument('--model', default='RGNN', type=str, metavar='MODEL',
+    parser.add_argument('--model', default='PRGNN_ti', type=str, metavar='MODEL',
                         help='Name of model to train')
     parser.add_argument('--gpu', default='1', type=str)
     parser.add_argument('--fold', default=1, type=int)
     parser.add_argument('--num_workers', default=4, type=int)
     parser.add_argument('--lr', default=0.0005, type=float)
-    parser.add_argument('--task', default='0217_RGNN_baseline', type=str)
+    parser.add_argument('--task', default='baseline', type=str)
     parser.add_argument('--dataparallel', action='store_true')
-    parser.add_argument('--dataset', default='FDG', type=str, choices=['FDG', 'FBB'])
-    parser.add_argument('--use_testloader', action='store_true')
     
     # Hyperparameters for model tuning
     parser.add_argument('--drop_path_rate', default=0, type=float)
@@ -34,8 +39,6 @@ def get_args_parser():
     parser.add_argument('--n_blocks', default=3, type=int)
     parser.add_argument('--weight_decay', default=1e-4, type=float)
     parser.add_argument('--lambda_XENT', default=1, type=float, help='Xent loss')
-    parser.add_argument('--lambda_AC', default=0, type=float, help='Attention-consistency loss on final node embedding')
-    parser.add_argument('--lambda_ES', default=0, type=float, help='Entropy-based sparsity loss on fc layer')
     parser.add_argument('--pool', default='avgpool', type=str, choices=['avgpool', 'maxpool', 'attention'])
     parser.add_argument('--act', default='gelu', type=str, choices=['gelu', 'relu', 'leakyrelu'])
     parser.add_argument('--k', default=9, type=int)
@@ -43,7 +46,6 @@ def get_args_parser():
     parser.add_argument('--stage', default='stage3', type=str)
     parser.add_argument('--relative_pos', action='store_true')
     parser.add_argument('--use_backbone_only', action='store_true')
-    parser.add_argument('--which_backbone_stage', default=3, type=int)
     
 
     return parser
@@ -56,10 +58,6 @@ def main(args):
     else:
         device = f'cuda:{args.gpu}'
         
-    if args.dataset == 'FBB':
-        args.num_classes = 2
-    else:
-        args.num_classes = 4
     start = time.time()
 
     num_classes = args.num_classes 
@@ -69,7 +67,6 @@ def main(args):
     if not os.path.exists(f'models/{args.task}/'):
         os.makedirs(f'models/{args.task}/')
     shutil.copy('vig.py', f'models/{args.task}/vig.py')
-    shutil.copy('rgnn.py', f'models/{args.task}/rgnn.py')
     shutil.copy('model.py', f'models/{args.task}/model.py')
     shutil.copy('train.py', f'models/{args.task}/train.py')
     def ignore_pycache(dirname, filenames):
@@ -80,8 +77,6 @@ def main(args):
                                                        batch_size=args.batch_size, 
                                                        num_workers=args.num_workers)
         
-    if args.use_testloader:
-        val_loader = test_loader
     model = get_model(args)
     if args.dataparallel:
         model = nn.DataParallel(model)
@@ -95,8 +90,8 @@ def main(args):
     xent_loss = torch.tensor(0.0)
     ac_loss = torch.tensor(0.0)
     es_loss = torch.tensor(0.0)
-    metrics = {'train_loss': [],'train_acc': [],'train_XENT': [],'train_AC': [],'train_ES': [],
-               'val_loss': [],'val_acc': [],'val_XENT': [],'val_AC': [],'val_ES': [],
+    metrics = {'train_loss': [],'train_acc': [],'train_XENT': [],
+               'val_loss': [],'val_acc': [],'val_XENT': [],
                'train_time': 0 }
     
     start = time.time()

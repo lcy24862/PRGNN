@@ -114,8 +114,7 @@ class DeepGCN(torch.nn.Module):
         drop_path = opt.drop_path
         relative_pos = opt.relative_pos
         self.pool = opt.pool
-        
-        self.stage = opt.stage
+
         
         blocks = opt.blocks
         self.n_blocks = sum(blocks)
@@ -148,7 +147,6 @@ class DeepGCN(torch.nn.Module):
             'stage1': obtain_contribution_maps(opt, (1, channels[0], 23, 28, 23), one_hot_mask, one_hot_mask.shape[0]),
             'stage2': obtain_contribution_maps(opt, (1, channels[1], 12, 14, 12), one_hot_mask, one_hot_mask.shape[0]),
             'stage3': obtain_contribution_maps(opt, (1, channels[2], 6, 7, 6), one_hot_mask, one_hot_mask.shape[0]),
-            # 'stage4': obtain_contribution_maps(opt, (1, 384, 3, 4, 3), one_hot_mask, one_hot_mask.shape[0])
         }
         ###########################################
 
@@ -171,15 +169,8 @@ class DeepGCN(torch.nn.Module):
 
             self.backbone[f'stage{i}'] = Seq(*backbone)
             
-        self.use_backbone_only = opt.use_backbone_only
-        self.which_backbone_stage = opt.which_backbone_stage
-        
-        if not opt.use_backbone_only:
-            self.pool = AveragePool1d()
-            self.prediction = nn.Conv1d(num_rois, opt.n_classes, 1, bias=True)
-        else:
-            self.pool = nn.AdaptiveAvgPool3d(1)
-            self.prediction = nn.Linear(channels[opt.which_backbone_stage], opt.n_classes, bias=True) 
+        self.pool = AveragePool1d()
+        self.prediction = nn.Conv1d(num_rois, opt.n_classes, 1, bias=True)
         self.model_init()
 
     def model_init(self):
@@ -231,44 +222,18 @@ class DeepGCN(torch.nn.Module):
     def forward(self, inputs):
         
         features = self.features(inputs)
-        
-        if self.use_backbone_only:
-            
-            pooled = self.pool(features[self.which_backbone_stage]).squeeze()
-            preds = self.prediction(pooled).unsqueeze(1)
-            # print(pooled.shape, preds.shape)
-            return preds 
 
-        #     return preds 
-        # print(stage0.shape, stage1.shape, stage2.shape, stage3.shape, stage4.shape)
-        # features = self.features(inputs)
-        
         stage0_node_emb = self.obtain_node_embedding(features[0], self.contribution_maps[f'stage0'])
         stage0_node_emb = self.backbone[f'stage0'](stage0_node_emb)
         stage0_node_emb = stage0_node_emb + self.pos_embed
         
-        # if self.stage == 'stage0':
-        #     pooled = self.pool(stage0_node_emb)    
-        #     preds = self.prediction(pooled).squeeze(2)
-        #     return preds 
-    
         stage1_node_emb = self.obtain_node_embedding(features[1], self.contribution_maps[f'stage1'])
         stage1_node_emb = torch.concat([stage0_node_emb, stage1_node_emb], dim=1)
         stage1_node_emb = self.backbone[f'stage1'](stage1_node_emb)
         
-        # if self.stage == 'stage1':
-        #     pooled = self.pool(stage1_node_emb)    
-        #     preds = self.prediction(pooled).squeeze(2)
-        #     return preds 
-        
         stage2_node_emb = self.obtain_node_embedding(features[2], self.contribution_maps[f'stage2'])
         stage2_node_emb = torch.concat([stage1_node_emb, stage2_node_emb], dim=1)
         stage2_node_emb = self.backbone[f'stage2'](stage2_node_emb)
-        
-        # if self.stage == 'stage2':
-        #     pooled = self.pool(stage2_node_emb)    
-        #     preds = self.prediction(pooled).squeeze(2)
-        #     return preds 
         
         stage3_node_emb = self.obtain_node_embedding(features[3], self.contribution_maps[f'stage3'])
         stage3_node_emb = torch.concat([stage2_node_emb, stage3_node_emb], dim=1)

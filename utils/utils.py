@@ -99,63 +99,6 @@ class AverageMeter(object):
 from .loss import attention_consistency_loss, final_embedding_entropy_loss
 from collections import defaultdict
 
-# def train_or_val(loader, device, epoch, args, optimizer, model, criterion_CN, scaler, scheduler, isTrain):
-
-#     losses = defaultdict(float)
-#     step, epoch_loss, metric_count, num_correct = (0,0,0,0)
-
-#     for batched in loader:
-
-#         step += 1
-#         optimizer.zero_grad()
-#         loss = 0
-        
-#         with torch.cuda.amp.autocast():
-                    
-#             data, labels = batched[0].to(device), batched[1].to(device)
-#             if args.model == 'RGNN':
-#                 output, final_embedding = model(data)
-#             else:
-#                 output = model(data)
-            
-#             # Compute reconstruction loss
-#             if args.lambda_XENT:
-#                 XENT_loss = args.lambda_XENT * criterion_CN(output, labels)
-#                 loss += XENT_loss
-#                 losses['XENT'] += XENT_loss.item()
-
-#             if args.lambda_AC:
-#                 AC_loss = args.lambda_AC * attention_consistency_loss(final_embedding, model.prediction.weight, labels)
-#                 loss += AC_loss
-#                 losses['AC'] += AC_loss.item()
-            
-#             if args.lambda_ES:
-#                 es_loss = args.lambda_ES * final_embedding_entropy_loss(final_embedding, model.prediction.weight, labels)
-#                 loss += es_loss
-#                 losses['ES'] += es_loss.item()
-
-#         if isTrain:
-#             scaler.scale(loss).backward()
-#             scaler.step(optimizer)
-#             scaler.update()
-#         epoch_loss += loss
-    
-#         # Count num_correct
-#         value = torch.eq(output.argmax(dim=1), labels)
-#         metric_count += len(value)        
-#         num_correct += value.sum().item()
-        
-#     # Summarize metrics and return
-#     metric = num_correct / metric_count
-#     epoch_loss /= step
-    
-#     for key in losses.keys():
-#         losses[key] /= step
-        
-#     losses['acc'] = metric
-#     scheduler.step(epoch)
-
-#     return losses
 
 def train_or_val(loader, device, epoch, args, optimizer, model, criterion_CN, scaler, scheduler, isTrain):
     losses = defaultdict(float)
@@ -170,26 +113,12 @@ def train_or_val(loader, device, epoch, args, optimizer, model, criterion_CN, sc
             # Training: gradients are needed.
             with torch.cuda.amp.autocast():
                 data, labels = batched[0].to(device), batched[1].to(device)
-                if args.model == 'RGNN' or args.model == 'ViT':
-                    output, final_embedding = model(data)
-                else:
-                    output = model(data)
+                output = model(data)
                 
                 # Compute losses
-                if args.lambda_XENT:
-                    XENT_loss = args.lambda_XENT * criterion_CN(output, labels)
-                    loss += XENT_loss
-                    losses['XENT'] += XENT_loss.item()
-
-                if args.lambda_AC:
-                    AC_loss = args.lambda_AC * attention_consistency_loss(final_embedding, model.prediction.weight, labels)
-                    loss += AC_loss
-                    losses['AC'] += AC_loss.item()
-
-                if args.lambda_ES:
-                    es_loss = args.lambda_ES * final_embedding_entropy_loss(final_embedding, model.prediction.weight, labels)
-                    loss += es_loss
-                    losses['ES'] += es_loss.item()
+                XENT_loss = args.lambda_XENT * criterion_CN(output, labels)
+                loss += XENT_loss
+                losses['XENT'] += XENT_loss.item()
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -199,26 +128,12 @@ def train_or_val(loader, device, epoch, args, optimizer, model, criterion_CN, sc
             with torch.no_grad():
                 with torch.cuda.amp.autocast():
                     data, labels = batched[0].to(device), batched[1].to(device)
-                    if args.model == 'RGNN' or args.model == 'ViT':
-                        output, final_embedding = model(data)
-                    else:
-                        output = model(data)
+                    output = model(data)
                     
-                    # Compute losses similarly (but no backward pass)
-                    if args.lambda_XENT:
-                        XENT_loss = args.lambda_XENT * criterion_CN(output, labels)
-                        loss += XENT_loss
-                        losses['XENT'] += XENT_loss.item()
+                    XENT_loss = args.lambda_XENT * criterion_CN(output, labels)
+                    loss += XENT_loss
+                    losses['XENT'] += XENT_loss.item()
 
-                    if args.lambda_AC:
-                        AC_loss = args.lambda_AC * attention_consistency_loss(final_embedding, model.prediction.weight, labels)
-                        loss += AC_loss
-                        losses['AC'] += AC_loss.item()
-
-                    if args.lambda_ES:
-                        es_loss = args.lambda_ES * final_embedding_entropy_loss(final_embedding, model.prediction.weight, labels)
-                        loss += es_loss
-                        losses['ES'] += es_loss.item()
 
         epoch_loss += loss
 

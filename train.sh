@@ -1,0 +1,1 @@
+python train.py --fold 5 --task baseline --lr 0.0001 --model PRGNN_ti --batch_size 8
