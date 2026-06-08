@@ -65,10 +65,12 @@ def main(args):
         model = model.to(device)
 
         suffix = 'best' if args.which_model == 'best' else 'last'
-        model_path = f"models/{args.task}/{args.model}_fold{fold}_{suffix}.pth"
+        model_path = f"models/{args.tracer}/{args.task}/{args.model}_fold{fold}_{suffix}.pth"
 
         if not os.path.exists(model_path):
-            # Try old naming convention
+            # Try old naming convention (no tracer subdir)
+            model_path = f"models/{args.task}/{args.model}_fold{fold}_{suffix}.pth"
+        if not os.path.exists(model_path):
             model_path = f"models/{args.task}/{args.model}_fold{fold}.pth"
         if not os.path.exists(model_path):
             print(f'  SKIP: model not found at {model_path}')
@@ -164,11 +166,12 @@ def main(args):
     print(f'{"="*50}')
 
     # Save
-    os.makedirs(f'models/{args.task}', exist_ok=True)
+    save_dir = f'models/{args.tracer}/{args.task}'
+    os.makedirs(save_dir, exist_ok=True)
     final_df = pd.concat(all_test_dfs, ignore_index=True)
-    final_df.to_csv(f'models/{args.task}/test_predictions.csv', index=False)
+    final_df.to_csv(f'{save_dir}/test_predictions.csv', index=False)
 
-    with open(f'models/{args.task}/test_results.txt', 'w') as f:
+    with open(f'{save_dir}/test_results.txt', 'w') as f:
         f.write(f'Model: {args.model}\n')
         f.write(f'Tracer: {args.tracer}\n')
         f.write(f'Task: {args.task}\n')
@@ -180,7 +183,7 @@ def main(args):
             f.write(f'Sensitivity: {sensitivity:.4f}\n')
             f.write(f'Specificity: {specificity:.4f}\n')
 
-    print(f'Results saved to models/{args.task}/')
+    print(f'Results saved to {save_dir}/')
 
 
 if __name__ == '__main__':

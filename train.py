@@ -75,7 +75,7 @@ def main(args):
     else:
         device = f'cuda:{args.gpu}'
 
-    model_dir = f'models/{args.task}'
+    model_dir = f'models/{args.tracer}/{args.task}'
     os.makedirs(model_dir, exist_ok=True)
     ckpt_path = f'{model_dir}/{args.model}_fold{args.fold}_checkpoint.pt'
 

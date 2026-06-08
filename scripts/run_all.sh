@@ -57,7 +57,7 @@ for TASK in "${TASKS[@]}"; do
     echo ""
     echo "########## Task: ${TASK} ##########"
 
-    TASK_MODEL_DIR="models/${TASK}"
+    TASK_MODEL_DIR="models/${TRACER}/${TASK}"
     mkdir -p "${TASK_MODEL_DIR}"
 
     # ---- Training ----
