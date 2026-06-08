@@ -1,0 +1,9 @@
+Model: PRGNN_ti
+Tracer: 18F-AV1451
+Task: AD_HC
+Classes: ['AD', 'HC']
+Accuracy: 0.8588
+F1 (weighted): 0.8588
+AUC: 0.9084
+Sensitivity: 0.8471
+Specificity: 0.8706
