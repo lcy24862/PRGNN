@@ -147,7 +147,7 @@ def main(args):
         if epoch_loss['XENT'] < best_metric:
             best_metric = epoch_loss['XENT']
             best_metric_epoch = epoch + 1
-            torch.save(model.state_dict(), f"models/{args.task}/{args.model}_fold{args.fold}.pth")
+            torch.save(model.state_dict(), f"models/{args.task}/{args.model}_fold{args.fold}_best.pth")
             print("saved new best metric model")
         print(
             "current epoch: {} current accuracy: {:.4f} best accuracy: {:.4f} at epoch {}".format(
@@ -166,7 +166,7 @@ def main(args):
     if args.dataparallel:
         model = nn.DataParallel(model)
     model = model.to(device)
-    model_path = f"models/{args.task}/{args.model}_fold{args.fold}.pth"
+    model_path = f"models/{args.task}/{args.model}_fold{args.fold}_best.pth"
     model_state = torch.load(model_path, map_location=device)
     model.load_state_dict(model_state)
     model.eval()

@@ -1,188 +1,190 @@
 import torch
-from data_utils import FDG, get_loader
+from data_utils import PETDataset, get_loader, TASK_CLASSES
+from model import get_model
 
 import argparse
-import json
+import os
 from setproctitle import setproctitle
 import time
-from model import get_model
 import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, confusion_matrix
 
+
 def get_args_parser():
-    
-    parser = argparse.ArgumentParser('FDG Classification', add_help=False)
+    parser = argparse.ArgumentParser('PRGNN Test', add_help=False)
+
     parser.add_argument('--which_model', default='best', type=str, choices=['best', 'last'])
-    
-    parser.add_argument('--batch_size', default=8, type=int,
-                        help='Per GPU batch size')
-    parser.add_argument('--model', default='PViG_ti', type=str, metavar='MODEL',
-                        help='Name of model to train')
+    parser.add_argument('--batch_size', default=8, type=int)
+    parser.add_argument('--model', default='PRGNN_ti', type=str)
     parser.add_argument('--gpu', default='0', type=str)
-    parser.add_argument('--stage', default='stage3', type=str)
-    
-    parser.add_argument('--num_classes', default=4, type=int)
-    parser.add_argument('--task', default='PViG_ti', type=str)
-    parser.add_argument('--dataparallel', default=False, type=bool)
-    parser.add_argument('--dataset', default='FDG', type=str, choices=['FDG', 'FBB'])
-    
-    # Hyperparameters
+    parser.add_argument('--dataparallel', action='store_true')
+
+    # Data
+    parser.add_argument('--data_dir', default='data_registered', type=str)
+    parser.add_argument('--tracer', default='18F-FDG', type=str,
+                        choices=['18F-FDG', '18F-FBB', '18F-AV45', '18F-AV1451'])
+    parser.add_argument('--task', default='AD_HC', type=str,
+                        help='Classification task: AD_HC, HC_MCI, EMCI_LMCI, HC_ALL_MCI, all')
+    parser.add_argument('--num_folds', default=5, type=int)
+    parser.add_argument('--num_workers', default=4, type=int)
+
+    # PRGNN hyperparams (must match training)
+    parser.add_argument('--roi_mask', default='template/AAL_reduced_mask.nii', type=str)
     parser.add_argument('--drop_path_rate', default=0, type=float)
-    parser.add_argument('--n_filters', default=128, type=int)
-    parser.add_argument('--weight_decay', default=1e-4, type=float)
-    parser.add_argument('--lambda_XENT', default=1, type=float, help='Xent loss')
-    parser.add_argument('--lambda_AC', default=0, type=float, help='Attention-consistency loss on final node embedding')
-    parser.add_argument('--lambda_ES', default=0, type=float, help='Entropy-based sparsity loss on fc layer')
-    parser.add_argument('--pool', default='avgpool', type=str, choices=['avgpool', 'maxpool', 'attention'])
-    parser.add_argument('--act', default='gelu', type=str, choices=['gelu', 'relu', 'leakyrelu'])
     parser.add_argument('--k', default=9, type=int)
+    parser.add_argument('--act', default='gelu', type=str)
+    parser.add_argument('--pool', default='avgpool', type=str)
     parser.add_argument('--relative_pos', action='store_true')
+
     return parser
 
-    
+
 def main(args):
-    
-    setproctitle('MICCAI Letsgogo')
-    device = f'cuda'
-    start = time.time()
+    setproctitle('PRGNN Test')
+    device = f'cuda:{args.gpu}' if not args.dataparallel else 'cuda'
 
-    if args.dataset == 'FBB':
-        args.num_classes = 2
-    else:
-        args.num_classes = 4
-    num_classes = args.num_classes # or 4    
-    if args.dataset == 'FBB':
-        pred_to_label = {0: 0, 1: 1}
-    else:
-        pred_to_label = {0: 'NC', 1: 'AD', 2: 'LBD', 3: 'PSP'}
+    # Determine num_classes from task
+    task_classes = TASK_CLASSES.get(args.task, TASK_CLASSES['AD_HC'])
+    args.num_classes = len(task_classes)
+    pred_to_label = {i: name for i, name in enumerate(task_classes)}
 
-    # Global lists to accumulate results across folds
-    all_true_list = []
-    all_preds_list = []
-    all_probs_list = []
-    all_folds_list = []
-    all_test_dfs = []  # To store each fold's DataFrame with predictions
+    print(f'Testing: model={args.model} tracer={args.tracer} task={args.task} '
+          f'classes={args.num_classes} data={args.data_dir}')
 
-    for fold in range(1, 6):
-        
+    # Accumulators across all folds
+    all_true_list, all_preds_list, all_probs_list, all_test_dfs = [], [], [], []
+
+    for fold in range(args.num_folds):
+        print(f'\n--- Fold {fold} ---')
+
+        # Load model
         model = get_model(args)
         if args.dataparallel:
             model = torch.nn.DataParallel(model)
         model = model.to(device)
-        
-        if args.which_model == 'best':
+
+        suffix = 'best' if args.which_model == 'best' else 'last'
+        model_path = f"models/{args.task}/{args.model}_fold{fold}_{suffix}.pth"
+
+        if not os.path.exists(model_path):
+            # Try old naming convention
             model_path = f"models/{args.task}/{args.model}_fold{fold}.pth"
-        else:
-            model_path = f"models/{args.task}/{args.model}_fold{fold}_last.pth"
+        if not os.path.exists(model_path):
+            print(f'  SKIP: model not found at {model_path}')
+            continue
+
         model_state = torch.load(model_path, map_location=device)
         model.load_state_dict(model_state)
         model.eval()
-        
-        # Lists for current fold
-        fold_true_list = []
-        fold_preds_list = []
-        fold_probs_list = []
-        
-        test_df = pd.read_csv(f'/media/storage2/Daesung/MICCAI/folds_{args.dataset}/fold_{fold}_test.csv')
-        test_ds = FDG(args, test_df, train=False, num_classes=num_classes)
-        
-        for idx in range(len(test_ds)):
-            with torch.amp.autocast('cuda'):
-                data, label = test_ds[idx]
-                # Ensure label is a scalar integer
-                true_label = label.item() if torch.is_tensor(label) else label
-                
-                # if 'PRGNN' in args.model:
-                #     output, final_embedding = model(data.unsqueeze(0).to(device).float())
-                # else:
-                output = model(data.unsqueeze(0).to(device).float())
-            
-            # Compute probabilities using softmax (assuming output are logits)
-            probabilities = torch.softmax(output, dim=1).detach().cpu().numpy()[0]
-            predicted_label = int(output.argmax(dim=1).item())
-            
-            fold_preds_list.append(predicted_label)
-            fold_true_list.append(true_label)
-            fold_probs_list.append(probabilities)
-            all_folds_list.append(fold)
-        
-        # Append current fold's data to global lists
+
+        # Load test data
+        _, _, test_loader = get_loader(
+            args, fold=fold, num_classes=args.num_classes,
+            batch_size=args.batch_size, num_workers=args.num_workers,
+        )
+
+        # Read test CSV for saving predictions
+        tracer_dir = os.path.join(args.data_dir, args.tracer)
+        if args.task == 'all':
+            # Reconstruct test split
+            from sklearn.model_selection import StratifiedKFold, train_test_split
+            all_df = pd.read_csv(os.path.join(tracer_dir, 'all.csv'))
+            all_df = all_df[all_df['DX'].isin(task_classes)].reset_index(drop=True)
+            skf = StratifiedKFold(n_splits=args.num_folds, shuffle=True, random_state=42)
+            fold_indices = list(skf.split(np.zeros(len(all_df)), all_df['DX']))
+            trainval_idx, test_idx = fold_indices[fold]
+            train_idx, val_idx = train_test_split(
+                trainval_idx, test_size=0.15, random_state=42 + fold,
+                stratify=all_df.iloc[trainval_idx]['DX'],
+            )
+            test_df = all_df.iloc[test_idx].reset_index(drop=True)
+        else:
+            test_csv = os.path.join(tracer_dir, args.task, f'test_fold{fold}.csv')
+            test_df = pd.read_csv(test_csv)
+
+        fold_true_list, fold_preds_list, fold_probs_list = [], [], []
+
+        with torch.no_grad():
+            for batched in test_loader:
+                data, labels = batched[0].to(device), batched[1].to(device)
+                with torch.amp.autocast('cuda'):
+                    output = model(data)
+
+                probs = torch.softmax(output, dim=1).detach().cpu().numpy()
+                preds = output.argmax(dim=1).detach().cpu().numpy()
+                trues = labels.detach().cpu().numpy()
+
+                fold_preds_list.extend(preds.tolist())
+                fold_true_list.extend(trues.tolist())
+                fold_probs_list.extend(probs.tolist())
+
+        fold_acc = accuracy_score(fold_true_list, fold_preds_list)
+        print(f'  Fold {fold} Accuracy: {fold_acc:.4f}')
+
         all_true_list.extend(fold_true_list)
         all_preds_list.extend(fold_preds_list)
         all_probs_list.extend(fold_probs_list)
-        
-        # Add predictions to the DataFrame for this fold
-        test_df['preds'] = [pred_to_label[pred] for pred in fold_preds_list]
-        test_df['is_correct'] = test_df['preds'] == test_df['label']
+
+        # Save per-fold predictions
+        test_df = test_df.copy()
+        test_df['pred'] = [pred_to_label.get(p, p) for p in fold_preds_list]
+        test_df['correct'] = test_df['pred'] == test_df['DX']
         test_df['fold'] = fold
-        print(f'Fold {fold} accuracy: {sum(test_df["is_correct"])/len(fold_true_list):.4f}')
         all_test_dfs.append(test_df)
 
-    # Combine DataFrames from all folds into a single DataFrame
-    final_df = pd.concat(all_test_dfs)
-    final_df.to_excel(f'/media/storage2/Daesung/MICCAI/models/{args.task}/test_preds.xlsx', index=False)
+    if not all_true_list:
+        print('ERROR: No folds evaluated. Check model paths.')
+        return
 
-    # Calculate overall metrics across all folds
+    # Overall metrics
     accuracy = accuracy_score(all_true_list, all_preds_list)
     f1 = f1_score(all_true_list, all_preds_list, average='weighted')
 
-    # Calculate AUC:
-    # For binary classification, use the probability of the positive class.
-    # For multiclass classification, pass the full probability matrix with multi_class='ovr'.
-    if num_classes == 2:
-        probs_positive = [p[1] for p in all_probs_list]
-        auc = roc_auc_score(all_true_list, probs_positive)
-        ################ calculate sensitivity and specificity here
+    if args.num_classes == 2:
+        probs_pos = [p[1] for p in all_probs_list]
+        auc = roc_auc_score(all_true_list, probs_pos)
         tn, fp, fn, tp = confusion_matrix(all_true_list, all_preds_list).ravel()
-        sensitivity = tp / (tp + fn) if (tp + fn) != 0 else 0  # True Positive Rate
-        specificity = tn / (tn + fp) if (tn + fp) != 0 else 0  # True Negative Rate
-        ################
+        sensitivity = tp / (tp + fn) if (tp + fn) else 0
+        specificity = tn / (tn + fp) if (tn + fp) else 0
     else:
-        all_probs_array = np.array(all_probs_list, dtype=np.float64) # shape: (n_samples, n_classes)
-        print(all_probs_array)
-        sums = all_probs_array.sum(axis=1, keepdims=True)
-        all_probs_array = all_probs_array / sums
-        all_probs_array = np.array([adjust_probabilities(p.copy()) for p in all_probs_array])
-        # print(all_probs_array.sum(axis=1, keepdims=True))
+        all_probs_array = np.array(all_probs_list)
+        all_probs_array = all_probs_array / all_probs_array.sum(axis=1, keepdims=True)
         auc = roc_auc_score(all_true_list, all_probs_array, multi_class='ovr')
+        sensitivity = specificity = None
 
-    print(f'Overall Accuracy: {accuracy:.4f}')
-    print(f'Overall F1 Score: {f1:.4f}')
-    print(f'Overall AUC: {auc:.4f}')
+    print(f'\n{"="*50}')
+    print(f'Overall Results: {args.model} / {args.tracer} / {args.task}')
+    print(f'  Accuracy:    {accuracy:.4f}')
+    print(f'  F1 (weighted): {f1:.4f}')
+    print(f'  AUC:         {auc:.4f}')
+    if sensitivity is not None:
+        print(f'  Sensitivity: {sensitivity:.4f}')
+        print(f'  Specificity: {specificity:.4f}')
+    print(f'{"="*50}')
 
-    with open(f'models/{args.task}/result.txt', 'a') as f:
+    # Save
+    os.makedirs(f'models/{args.task}', exist_ok=True)
+    final_df = pd.concat(all_test_dfs, ignore_index=True)
+    final_df.to_csv(f'models/{args.task}/test_predictions.csv', index=False)
 
-        f.write('\n')
-        f.write(f'Overall test accuracy ({args.which_model}): {accuracy:.4f} \n')
-        f.write(f'Overall test F1 score: {f1:.4f} \n')
-        f.write(f'Overall test AUC: {auc:.4f} \n')
-        if num_classes == 2:
-            f.write(f'Overall test sensitivity: {sensitivity:.4f} \n')
-            f.write(f'Overall test specificity: {specificity:.4f} \n')  
-        f.write('\n')
-        
-        
-def adjust_probabilities(probs, tol=1e-6):
-    """
-    Adjust a probability vector so that it sums exactly to 1.
-    
-    If the sum deviates from 1 by more than tol, re-normalize.
-    Otherwise, adjust the last element by the small difference.
-    """
-    total = np.sum(probs)
-    diff = 1.0 - total
+    with open(f'models/{args.task}/test_results.txt', 'w') as f:
+        f.write(f'Model: {args.model}\n')
+        f.write(f'Tracer: {args.tracer}\n')
+        f.write(f'Task: {args.task}\n')
+        f.write(f'Classes: {task_classes}\n')
+        f.write(f'Accuracy: {accuracy:.4f}\n')
+        f.write(f'F1 (weighted): {f1:.4f}\n')
+        f.write(f'AUC: {auc:.4f}\n')
+        if sensitivity is not None:
+            f.write(f'Sensitivity: {sensitivity:.4f}\n')
+            f.write(f'Specificity: {specificity:.4f}\n')
 
-    # Small discrepancy: adjust the last element
-    if total != 1:
-        # print('????????????? why', total, diff)
-        probs[np.argmax(probs)] += diff
+    print(f'Results saved to models/{args.task}/')
 
-    return probs
-    
+
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser('Custom U-Net', parents=[get_args_parser()])
+    parser = argparse.ArgumentParser('PRGNN Test', parents=[get_args_parser()])
     args = parser.parse_args()
     print(args)
     main(args)
