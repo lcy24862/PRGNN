@@ -1,0 +1,9 @@
+Model: PRGNN_ti
+Tracer: 18F-FDG
+Task: AD_HC
+Classes: ['AD', 'HC']
+Accuracy: 0.8688
+F1 (weighted): 0.8686
+AUC: 0.9516
+Sensitivity: 0.9021
+Specificity: 0.8348

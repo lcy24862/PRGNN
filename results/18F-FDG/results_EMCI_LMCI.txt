@@ -1,0 +1,9 @@
+Model: PRGNN_ti
+Tracer: 18F-FDG
+Task: EMCI_LMCI
+Classes: ['EMCI', 'LMCI']
+Accuracy: 0.5440
+F1 (weighted): 0.5416
+AUC: 0.5946
+Sensitivity: 0.6160
+Specificity: 0.4720
