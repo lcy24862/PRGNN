@@ -1,0 +1,9 @@
+Model: PRGNN_ti
+Tracer: 18F-FBB
+Task: HC_MCI
+Classes: ['HC', 'MCI']
+Accuracy: 0.5474
+F1 (weighted): 0.5473
+AUC: 0.5973
+Sensitivity: 0.5579
+Specificity: 0.5368
