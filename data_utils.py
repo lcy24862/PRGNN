@@ -374,12 +374,12 @@ def print_dimension_info(args):
 
     # Find a sample file
     for root, dirs, files in os.walk(tracer_dir):
-        nii_files = [f for f in files if f.endswith('.nii.gz')]
+        nii_files = [f for f in files if f.endswith('.nii.gz') or f.endswith('.nii')]
         if nii_files:
             sample = os.path.join(root, nii_files[0])
             break
     else:
-        print("[WARN] No .nii.gz files found – cannot check dimensions.")
+        print("[WARN] No .nii/.nii.gz files found – cannot check dimensions.")
         return
 
     img = nib.load(sample)

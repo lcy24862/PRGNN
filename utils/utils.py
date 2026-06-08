@@ -111,7 +111,7 @@ def train_or_val(loader, device, epoch, args, optimizer, model, criterion_CN, sc
         if isTrain:
             optimizer.zero_grad()
             # Training: gradients are needed.
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 data, labels = batched[0].to(device), batched[1].to(device)
                 output = model(data)
                 
@@ -126,7 +126,7 @@ def train_or_val(loader, device, epoch, args, optimizer, model, criterion_CN, sc
         else:
             # Validation: no gradient computation needed.
             with torch.no_grad():
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast('cuda'):
                     data, labels = batched[0].to(device), batched[1].to(device)
                     output = model(data)
                     

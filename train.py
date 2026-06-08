@@ -114,7 +114,7 @@ def main(args):
     start = time.time()
     best_metric, best_metric_epoch = (999, 0)
         
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
     for epoch in range(args.epochs):
         
         print("-" * 10)
