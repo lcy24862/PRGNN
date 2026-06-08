@@ -1,6 +1,7 @@
 # 2022.10.31-Changed for building ViG model
 #            Huawei Technologies Co., Ltd. <foss@huawei.com>
 import math
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -125,29 +126,42 @@ class DeepGCN(torch.nn.Module):
         max_dilation = 49 // max(num_knn)
         
         self.features = ResNetFeatures('basic', [1, 1, 1], opt.channels[1:])
-        self.pos_embed = nn.Parameter(torch.zeros(1, channels[0], 53))
-        
+
         ###########################################
         # One_hot_mask 만들어서 stem 에 곱해줄거임 #
+        if not os.path.exists(opt.one_hot_mask):
+            raise FileNotFoundError(
+                f"ROI template mask not found: {opt.one_hot_mask}\n"
+                f"The PRGNN model requires an AAL atlas ROI mask (e.g., AAL_reduced_mask.nii).\n"
+                f"Please place it in the template/ directory."
+            )
         ROI_mask = nib.load(opt.one_hot_mask).get_fdata()
         ROI_mask = torch.Tensor(ROI_mask)
         labels = np.unique(ROI_mask)
         num_rois = len(labels)
+        mask_shape = ROI_mask.shape  # e.g. (91, 109, 91)
 
-        one_hot_mask = torch.zeros((num_rois, 91, 109, 91))
+        one_hot_mask = torch.zeros((num_rois, *mask_shape))
         for label_new, label_orig in enumerate(labels):
-            # exclude zero??
             if label_new == 0:
                 continue
-            one_hot_mask[label_new] = (ROI_mask == label_orig).float()  # Binary mask for each ROI
+            one_hot_mask[label_new] = (ROI_mask == label_orig).float()
+
+        # Dynamically compute feature-map spatial sizes for contribution maps.
+        # Input shape is determined by a dry-run through the feature extractor
+        # or manually computed from the mask shape (since data is resized to match).
+        from data_utils import compute_feature_map_shapes
+        fm_shapes = compute_feature_map_shapes(mask_shape)
 
         roi_centers = self.get_normalized_roi_centers(one_hot_mask, opt.batch_size)
         self.contribution_maps = {
-            'stage0': obtain_contribution_maps(opt, (1, channels[0], 46, 55, 46), one_hot_mask, one_hot_mask.shape[0]), # TODO: 나중에 1이 아니라 batch size 로 바꿔야함
-            'stage1': obtain_contribution_maps(opt, (1, channels[0], 23, 28, 23), one_hot_mask, one_hot_mask.shape[0]),
-            'stage2': obtain_contribution_maps(opt, (1, channels[1], 12, 14, 12), one_hot_mask, one_hot_mask.shape[0]),
-            'stage3': obtain_contribution_maps(opt, (1, channels[2], 6, 7, 6), one_hot_mask, one_hot_mask.shape[0]),
+            'stage0': obtain_contribution_maps(opt, (1, channels[0], *fm_shapes['stage0']), one_hot_mask, num_rois),
+            'stage1': obtain_contribution_maps(opt, (1, channels[0], *fm_shapes['stage1']), one_hot_mask, num_rois),
+            'stage2': obtain_contribution_maps(opt, (1, channels[1], *fm_shapes['stage2']), one_hot_mask, num_rois),
+            'stage3': obtain_contribution_maps(opt, (1, channels[2], *fm_shapes['stage3']), one_hot_mask, num_rois),
         }
+        self.num_rois = num_rois
+        self.pos_embed = nn.Parameter(torch.zeros(1, channels[0], num_rois))
         ###########################################
 
         self.backbone = nn.ModuleDict()
