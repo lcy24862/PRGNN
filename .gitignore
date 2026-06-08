@@ -4,7 +4,6 @@
 
 # Ignore models folder
 models/
-template/
 folds/
 
 # Ignore pycache
