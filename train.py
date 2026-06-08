@@ -74,26 +74,29 @@ def main(args):
         device = 'cuda'
     else:
         device = f'cuda:{args.gpu}'
-        
-    start = time.time()
 
-    num_classes = args.num_classes 
-    print(f'Training with fold {args.fold}, model {args.model}')
+    model_dir = f'models/{args.task}'
+    os.makedirs(model_dir, exist_ok=True)
+    ckpt_path = f'{model_dir}/{args.model}_fold{args.fold}_checkpoint.pt'
 
-    print(f'Copying model files...')
-    if not os.path.exists(f'models/{args.task}/'):
-        os.makedirs(f'models/{args.task}/')
-    shutil.copy('vig.py', f'models/{args.task}/vig.py')
-    shutil.copy('model.py', f'models/{args.task}/model.py')
-    shutil.copy('train.py', f'models/{args.task}/train.py')
+    num_classes = args.num_classes
+
+    # ---- Backup model source files (once) ----
+    print('Copying model files...')
+    shutil.copy('vig.py', f'{model_dir}/vig.py')
+    shutil.copy('model.py', f'{model_dir}/model.py')
+    shutil.copy('train.py', f'{model_dir}/train.py')
     def ignore_pycache(dirname, filenames):
         return [name for name in filenames if name == '__pycache__']
-    shutil.copytree('gcn_lib', f'models/{args.task}/gcn_lib', ignore=ignore_pycache, dirs_exist_ok=True)
-    
-    train_loader, val_loader, test_loader = get_loader(args, fold=args.fold, num_classes=num_classes,
-                                                       batch_size=args.batch_size, 
-                                                       num_workers=args.num_workers)
-        
+    shutil.copytree('gcn_lib', f'{model_dir}/gcn_lib', ignore=ignore_pycache, dirs_exist_ok=True)
+
+    # ---- Data loaders ----
+    train_loader, val_loader, test_loader = get_loader(
+        args, fold=args.fold, num_classes=num_classes,
+        batch_size=args.batch_size, num_workers=args.num_workers,
+    )
+
+    # ---- Model / optimizer / scheduler ----
     model = get_model(args)
     if args.dataparallel:
         model = nn.DataParallel(model)
@@ -102,43 +105,70 @@ def main(args):
     criterion_CN = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = CosineAnnealingWarmUpRestarts(optimizer, T_0=50, T_mult=2, eta_max=args.lr, T_up=10, gamma=0.5)
-
-    xent_losses = AverageMeter()
-    xent_loss = torch.tensor(0.0)
-    ac_loss = torch.tensor(0.0)
-    es_loss = torch.tensor(0.0)
-    metrics = {'train_loss': [],'train_acc': [],'train_XENT': [],
-               'val_loss': [],'val_acc': [],'val_XENT': [],
-               'train_time': 0 }
-    
-    start = time.time()
-    best_metric, best_metric_epoch = (999, 0)
-        
     scaler = torch.amp.GradScaler('cuda')
-    for epoch in range(args.epochs):
-        
+
+    # ---- State ----
+    start_epoch = 0
+    best_metric = 999.0
+    best_metric_epoch = 0
+    metrics = {'train_loss': [], 'train_acc': [], 'train_XENT': [],
+               'val_loss': [], 'val_acc': [], 'val_XENT': [],
+               'train_time': 0}
+    total_train_time = 0.0
+
+    # ---- Resume from checkpoint if available ----
+    if os.path.exists(ckpt_path):
+        print(f'[Resume] Found checkpoint: {ckpt_path}')
+        ckpt = torch.load(ckpt_path, map_location=device)
+
+        model.load_state_dict(ckpt['model_state'])
+        optimizer.load_state_dict(ckpt['optimizer_state'])
+        scheduler.load_state_dict(ckpt['scheduler_state'])
+        scaler.load_state_dict(ckpt['scaler_state'])
+
+        start_epoch = ckpt['epoch'] + 1   # resume from next epoch
+        best_metric = ckpt.get('best_metric', 999.0)
+        best_metric_epoch = ckpt.get('best_metric_epoch', 0)
+        metrics = ckpt.get('metrics', metrics)
+        total_train_time = ckpt.get('train_time', 0.0)
+
+        print(f'[Resume] Epoch {start_epoch}/{args.epochs}  '
+              f'best_val_loss={best_metric:.4f} (epoch {best_metric_epoch})')
+
+        # If already finished, skip training
+        if start_epoch >= args.epochs:
+            print(f'[Resume] Training already completed ({args.epochs} epochs). '
+                  f'Jumping to final test.')
+            # fall through to test section below
+    else:
+        print(f'Training fold {args.fold}, model {args.model} (from scratch)')
+
+    # ---- Training loop ----
+    wall_start = time.time()
+    for epoch in range(start_epoch, args.epochs):
+
         print("-" * 10)
         print(f"epoch {epoch + 1}/{args.epochs}")
-        
+
         model.train()
-        epoch_loss = train_or_val(loader=train_loader, device=device,
-                                                  epoch=epoch, args=args, optimizer=optimizer,
-                                                  model=model, criterion_CN=criterion_CN,
-                                                  scaler=scaler, scheduler=scheduler,
-                                                  isTrain=True)
-        
+        epoch_loss = train_or_val(
+            loader=train_loader, device=device, epoch=epoch, args=args,
+            optimizer=optimizer, model=model, criterion_CN=criterion_CN,
+            scaler=scaler, scheduler=scheduler, isTrain=True,
+        )
+
         loss_statement = ' '.join([f'{key}: {epoch_loss[key]:.4f}' for key in epoch_loss.keys()])
         print(f"[Train] {loss_statement}")
         for key in epoch_loss.keys():
             metrics[f'train_{key}'].append(epoch_loss[key])
 
         model.eval()
-        epoch_loss = train_or_val(loader=val_loader, device=device,
-                                                  epoch=epoch, args=args, optimizer=optimizer,
-                                                  model=model, criterion_CN=criterion_CN,
-                                                  scaler=scaler, scheduler=scheduler,
-                                                  isTrain=False)
-        
+        epoch_loss = train_or_val(
+            loader=val_loader, device=device, epoch=epoch, args=args,
+            optimizer=optimizer, model=model, criterion_CN=criterion_CN,
+            scaler=scaler, scheduler=scheduler, isTrain=False,
+        )
+
         loss_statement = ' '.join([f'{key}: {epoch_loss[key]:.4f}' for key in epoch_loss.keys()])
         print(f"[Val] {loss_statement}")
         for key in epoch_loss.keys():
@@ -147,46 +177,59 @@ def main(args):
         if epoch_loss['XENT'] < best_metric:
             best_metric = epoch_loss['XENT']
             best_metric_epoch = epoch + 1
-            torch.save(model.state_dict(), f"models/{args.task}/{args.model}_fold{args.fold}_best.pth")
+            torch.save(model.state_dict(), f'{model_dir}/{args.model}_fold{args.fold}_best.pth')
             print("saved new best model (lowest val loss)")
-        print(
-            "epoch {} | acc: {:.4f} | val_loss: {:.4f} | best_val_loss: {:.4f} (epoch {})".format(
-                epoch + 1, epoch_loss['acc'], epoch_loss['XENT'], best_metric, best_metric_epoch
-            )
-        )
-        torch.save(model.state_dict(), f"models/{args.task}/{args.model}_fold{args.fold}_last.pth")
 
-    end = time.time()
-    metrics['training_time'] = round((end-start)/60, 3)
-    with open(f'models/{args.task}/metrics_fold{args.fold}.json', 'w') as f:
+        print("epoch {} | acc: {:.4f} | val_loss: {:.4f} | best_val_loss: {:.4f} (epoch {})".format(
+            epoch + 1, epoch_loss['acc'], epoch_loss['XENT'], best_metric, best_metric_epoch,
+        ))
+
+        torch.save(model.state_dict(), f'{model_dir}/{args.model}_fold{args.fold}_last.pth')
+
+        # ---- Save full checkpoint for resume ----
+        elapsed = round((time.time() - wall_start) / 60, 3)
+        torch.save({
+            'epoch': epoch,
+            'model_state': model.state_dict(),
+            'optimizer_state': optimizer.state_dict(),
+            'scheduler_state': scheduler.state_dict(),
+            'scaler_state': scaler.state_dict(),
+            'best_metric': best_metric,
+            'best_metric_epoch': best_metric_epoch,
+            'metrics': metrics,
+            'train_time': total_train_time + elapsed,
+        }, ckpt_path)
+
+    # ---- Save final metrics ----
+    total_train_time = round((time.time() - wall_start) / 60, 3) + total_train_time
+    metrics['training_time'] = total_train_time
+    with open(f'{model_dir}/metrics_fold{args.fold}.json', 'w') as f:
         json.dump(metrics, f)
 
-    # FINAL TEST
+    # ---- Final test on best model ----
     model = get_model(args)
     if args.dataparallel:
         model = nn.DataParallel(model)
     model = model.to(device)
-    model_path = f"models/{args.task}/{args.model}_fold{args.fold}_best.pth"
-    model_state = torch.load(model_path, map_location=device)
+
+    best_path = f'{model_dir}/{args.model}_fold{args.fold}_best.pth'
+    model_state = torch.load(best_path, map_location=device)
     model.load_state_dict(model_state)
     model.eval()
 
-    epoch_loss = train_or_val(loader=test_loader, device=device,
-                                            epoch=epoch, args=args, optimizer=optimizer,
-                                            model=model, criterion_CN=criterion_CN,
-                                            scaler=scaler, scheduler=scheduler,
-                                            isTrain=False)
-        
-    with open(f'models/{args.task}/result.txt', 'a') as f:
+    test_loss = train_or_val(
+        loader=test_loader, device=device, epoch=args.epochs, args=args,
+        optimizer=optimizer, model=model, criterion_CN=criterion_CN,
+        scaler=scaler, scheduler=scheduler, isTrain=False,
+    )
 
-        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
-        f.write('\n')
-        f.write(f'Best val XENT for fold {args.fold}: {best_metric:.4f} at epoch {best_metric_epoch}')
-        f.write('\n')
-        f.write(f'Test accuracy for fold {args.fold}: {epoch_loss["acc"]:.4f}')
-        f.write('\n')
-        f.write(f'Total training time: {round((end-start)/60, 3)}')
-        f.write('\n\n')
+    with open(f'{model_dir}/result.txt', 'a') as f:
+        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]\n")
+        f.write(f'Best val XENT for fold {args.fold}: {best_metric:.4f} at epoch {best_metric_epoch}\n')
+        f.write(f'Test accuracy for fold {args.fold}: {test_loss["acc"]:.4f}\n')
+        f.write(f'Total training time: {total_train_time} min\n\n')
+
+    print(f'Fold {args.fold} done. Test acc: {test_loss["acc"]:.4f}')
     
 
 if __name__ == '__main__':

@@ -1,6 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # PRGNN: Run training + testing on all tasks and folds
+# Supports checkpoint resume — safe to re-run after interruption.
 #
 # Usage:
 #   bash scripts/run_all.sh                              # all default tasks
@@ -61,6 +62,15 @@ for TASK in "${TASKS[@]}"; do
 
     # ---- Training ----
     for FOLD in $(seq 0 $((FOLDS - 1))); do
+        BEST_PTH="${TASK_MODEL_DIR}/${MODEL}_fold${FOLD}_best.pth"
+        LAST_PTH="${TASK_MODEL_DIR}/${MODEL}_fold${FOLD}_last.pth"
+
+        # Skip if already completed (best model exists and last model = fully trained)
+        if [ -f "${BEST_PTH}" ]; then
+            echo "[Train] Fold ${FOLD}: SKIP (best model already exists)"
+            continue
+        fi
+
         CMD="python train.py \
             --model ${MODEL} \
             --tracer ${TRACER} \
@@ -80,24 +90,29 @@ for TASK in "${TASKS[@]}"; do
     done
 
     # ---- Testing ----
-    CMD="python test.py \
-        --model ${MODEL} \
-        --tracer ${TRACER} \
-        --task ${TASK} \
-        --data_dir ${DATA_DIR} \
-        --gpu ${GPU} \
-        --which_model best"
+    RESULT_FILE="${TASK_MODEL_DIR}/test_results.txt"
+    if [ -f "${RESULT_FILE}" ]; then
+        echo "[Test] SKIP (test_results.txt already exists)"
+    else
+        CMD="python test.py \
+            --model ${MODEL} \
+            --tracer ${TRACER} \
+            --task ${TASK} \
+            --data_dir ${DATA_DIR} \
+            --gpu ${GPU} \
+            --which_model best"
 
-    echo ""
-    echo "[Test] ${CMD}"
+        echo ""
+        echo "[Test] ${CMD}"
 
-    if [ "${DRY_RUN}" = false ]; then
-        eval ${CMD}
+        if [ "${DRY_RUN}" = false ]; then
+            eval ${CMD}
+        fi
     fi
 
     # ---- Collect results ----
-    if [ -f "models/${TASK}/test_results.txt" ]; then
-        cp "models/${TASK}/test_results.txt" "${RESULTS_DIR}/results_${TASK}.txt"
+    if [ -f "${RESULT_FILE}" ]; then
+        cp "${RESULT_FILE}" "${RESULTS_DIR}/results_${TASK}.txt"
         echo "Results saved to ${RESULTS_DIR}/results_${TASK}.txt"
     fi
 
