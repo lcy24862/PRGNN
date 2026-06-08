@@ -148,10 +148,10 @@ def main(args):
             best_metric = epoch_loss['XENT']
             best_metric_epoch = epoch + 1
             torch.save(model.state_dict(), f"models/{args.task}/{args.model}_fold{args.fold}_best.pth")
-            print("saved new best metric model")
+            print("saved new best model (lowest val loss)")
         print(
-            "current epoch: {} current accuracy: {:.4f} best accuracy: {:.4f} at epoch {}".format(
-                epoch + 1, epoch_loss['acc'], best_metric, best_metric_epoch
+            "epoch {} | acc: {:.4f} | val_loss: {:.4f} | best_val_loss: {:.4f} (epoch {})".format(
+                epoch + 1, epoch_loss['acc'], epoch_loss['XENT'], best_metric, best_metric_epoch
             )
         )
         torch.save(model.state_dict(), f"models/{args.task}/{args.model}_fold{args.fold}_last.pth")
@@ -181,7 +181,7 @@ def main(args):
 
         f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]")
         f.write('\n')
-        f.write(f'Best accuracy for fold {args.fold}: {best_metric:.4f} at epoch {best_metric_epoch}')
+        f.write(f'Best val XENT for fold {args.fold}: {best_metric:.4f} at epoch {best_metric_epoch}')
         f.write('\n')
         f.write(f'Test accuracy for fold {args.fold}: {epoch_loss["acc"]:.4f}')
         f.write('\n')
