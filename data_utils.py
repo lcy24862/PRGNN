@@ -175,26 +175,36 @@ class PETDataset(Dataset):
         """
         Given a row with 'filename' and 'DX', find the actual file on disk.
         The CSV 'filename' is a relative path like '../ADNI/18F-FDG/AD/PET_xxx.nii.gz'.
-        We extract the basename and look under data_root / DX / basename.
+        We extract the basename, try both .nii and .nii.gz extensions, and look
+        under data_root / DX / basename.
         """
         csv_path = row['filename']
         basename = os.path.basename(csv_path)
-        # Ensure .nii.gz extension
-        if not basename.endswith('.nii.gz'):
-            basename = basename + '.nii.gz' if basename.endswith('.nii') else basename
 
-        # Try: data_root / DX / basename
+        # Try multiple possible extensions (.nii.gz ↔ .nii)
+        if basename.endswith('.nii.gz'):
+            candidates_ext = [basename, basename[:-7] + '.nii']
+        elif basename.endswith('.nii'):
+            candidates_ext = [basename, basename + '.gz']
+        else:
+            candidates_ext = [basename + '.nii.gz', basename + '.nii']
+
         dx = row['DX']
-        candidate = os.path.join(self.data_root, dx, basename)
-        if os.path.isfile(candidate):
-            return candidate
 
-        # Fallback: walk data_root to find the file
-        for root, dirs, files in os.walk(self.data_root):
-            if basename in files:
-                return os.path.join(root, basename)
+        for fname in candidates_ext:
+            candidate = os.path.join(self.data_root, dx, fname)
+            if os.path.isfile(candidate):
+                return candidate
 
-        raise FileNotFoundError(f"Cannot locate {basename} under {self.data_root}")
+        # Fallback: walk data_root for any matching extension
+        for fname in candidates_ext:
+            for root, dirs, files in os.walk(self.data_root):
+                if fname in files:
+                    return os.path.join(root, fname)
+
+        raise FileNotFoundError(
+            f"Cannot locate {basename} (tried {candidates_ext}) under {self.data_root}"
+        )
 
     def load_data(self, path):
         data = nib.load(path).get_fdata()

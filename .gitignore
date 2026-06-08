@@ -5,8 +5,9 @@ folds/
 # Ignore pycache
 __pycache__/
 
-
 # Matlab files
 *.m
 
+# Data (raw and registered)
 data/
+data_registered/
