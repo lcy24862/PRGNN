@@ -23,7 +23,7 @@ def get_args_parser():
     # Data
     parser.add_argument('--data_dir', default='data_registered', type=str)
     parser.add_argument('--tracer', default='18F-FDG', type=str,
-                        choices=['18F-FDG', '18F-FBB', '18F-AV45', '18F-AV1451'])
+                        choices=['18F-FDG', '18F-FBB', '18F-AV45', '18F-AV1451', 'Amyloid'])
     parser.add_argument('--task', default='AD_HC', type=str,
                         help='Classification task: AD_HC, HC_MCI, EMCI_LMCI, HC_ALL_MCI, all')
     parser.add_argument('--num_folds', default=5, type=int)

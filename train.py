@@ -37,7 +37,7 @@ def get_args_parser():
     # Data arguments (see data_utils.add_data_args)
     parser.add_argument('--data_dir', default='data', type=str)
     parser.add_argument('--tracer', default='18F-FDG', type=str,
-                        choices=['18F-FDG', '18F-FBB', '18F-AV45', '18F-AV1451'])
+                        choices=['18F-FDG', '18F-FBB', '18F-AV45', '18F-AV1451', 'Amyloid'])
     parser.add_argument('--target_size', default=None, type=int, nargs=3,
                         help='Resize volumes, e.g. --target_size 96 96 96')
     parser.add_argument('--num_folds', default=5, type=int)
