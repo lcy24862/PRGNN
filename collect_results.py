@@ -92,14 +92,48 @@ def collect_results(output_dir='results_summary', tracer_filter=None):
                     if m.get('val_XENT'):
                         best_xent = min(m['val_XENT'])
                         best_epoch = int(np.argmin(m['val_XENT'])) + 1
+                        # Also capture best_epoch's val accuracy
+                        best_idx = np.argmin(m['val_XENT'])
+                        best_val_acc = m['val_acc'][best_idx] if m.get('val_acc') and len(m['val_acc']) > best_idx else np.nan
+                        best_train_acc = m['train_acc'][best_idx] if m.get('train_acc') and len(m['train_acc']) > best_idx else np.nan
                         rows.append({
                             'tracer': tracer if tracer != 'unknown' else '-',
                             'task': task,
                             'fold': fold,
                             'best_val_XENT': round(best_xent, 4),
+                            'best_val_acc': round(best_val_acc, 4) if not np.isnan(best_val_acc) else np.nan,
+                            'best_train_acc': round(best_train_acc, 4) if not np.isnan(best_train_acc) else np.nan,
                             'best_epoch': best_epoch,
                             'train_time_min': m.get('training_time', 0),
                         })
+
+            # ---- Per-fold test accuracy from predictions CSV ----
+            pred_file = os.path.join(task_dir, 'test_predictions.csv')
+            if os.path.exists(pred_file):
+                pred_df = pd.read_csv(pred_file)
+                # Compute per-fold accuracy from the predictions
+                if 'fold' in pred_df.columns and 'correct' in pred_df.columns:
+                    fold_accs = pred_df.groupby('fold')['correct'].agg(['mean', 'sum', 'count'])
+                    for fold_val, acc_row in fold_accs.iterrows():
+                        fold_int = int(fold_val)
+                        # Update existing row or add new
+                        matched = [r for r in rows
+                                   if r['tracer'] == (tracer if tracer != 'unknown' else '-')
+                                   and r['task'] == task and r['fold'] == fold_int]
+                        if matched:
+                            matched[0]['fold_test_acc'] = round(acc_row['mean'], 4)
+                        else:
+                            rows.append({
+                                'tracer': tracer if tracer != 'unknown' else '-',
+                                'task': task,
+                                'fold': fold_int,
+                                'best_val_XENT': np.nan,
+                                'best_val_acc': np.nan,
+                                'best_train_acc': np.nan,
+                                'best_epoch': np.nan,
+                                'train_time_min': 0,
+                                'fold_test_acc': round(acc_row['mean'], 4),
+                            })
 
             # ---- Per-sample predictions ----
             pred_file = os.path.join(task_dir, 'test_predictions.csv')
@@ -134,35 +168,66 @@ def collect_results(output_dir='results_summary', tracer_filter=None):
     if rows:
         df = pd.DataFrame(rows)
 
+        # Fill NaN in fold_test_acc for rows that didn't get a prediction match
+        if 'fold_test_acc' not in df.columns:
+            df['fold_test_acc'] = np.nan
+
         # Per-task (and per-tracer) aggregation
         agg = df.groupby(['tracer', 'task']).agg(
             folds=('fold', 'count'),
             avg_val_XENT=('best_val_XENT', 'mean'),
+            std_val_XENT=('best_val_XENT', 'std'),
             min_val_XENT=('best_val_XENT', 'min'),
+            avg_val_acc=('best_val_acc', 'mean'),
+            std_val_acc=('best_val_acc', 'std'),
+            avg_test_acc=('fold_test_acc', 'mean'),     # per-fold mean from predictions
+            std_test_acc=('fold_test_acc', 'std'),      # per-fold std  from predictions
             total_time_min=('train_time_min', 'sum'),
         ).reset_index()
 
-        # Try to extract test accuracy from result files
-        test_acc_rows = []
+        # Round numeric columns to 4 decimal places
+        for col in agg.columns:
+            if col not in ('tracer', 'task', 'folds'):
+                agg[col] = agg[col].round(4)
+
+        # Try to extract overall metrics from result files (all folds pooled)
+        overall_rows = []
         for _, row in agg.iterrows():
             tracer_v = row['tracer']
             task_v = row['task']
             prefix = f'{tracer_v}_{task_v}' if tracer_v != '-' else task_v
             rf = os.path.join(output_dir, 'result_texts', f'{prefix}_results.txt')
             if os.path.exists(rf):
+                metrics = {}
                 with open(rf) as f:
                     for line in f:
-                        if 'Accuracy:' in line:
-                            v = float(line.split(':')[1].strip())
-                            test_acc_rows.append({
-                                'tracer': tracer_v, 'task': task_v,
-                                'test_accuracy': round(v, 4),
-                            })
-                            break
+                        for key in ['Accuracy', 'F1', 'AUC', 'Sensitivity', 'Specificity']:
+                            if line.startswith(f'{key}:'):
+                                try:
+                                    metrics[key.lower()] = float(line.split(':')[1].strip())
+                                except ValueError:
+                                    pass
+                if metrics:
+                    metrics['tracer'] = tracer_v
+                    metrics['task'] = task_v
+                    overall_rows.append(metrics)
 
-        if test_acc_rows:
-            acc_df = pd.DataFrame(test_acc_rows)
-            agg = agg.merge(acc_df, on=['tracer', 'task'], how='left')
+        if overall_rows:
+            overall_df = pd.DataFrame(overall_rows)
+            # Rename to clarify these are overall (all samples pooled)
+            rename_map = {}
+            if 'accuracy' in overall_df.columns:
+                rename_map['accuracy'] = 'overall_accuracy'
+            if 'f1' in overall_df.columns:
+                rename_map['f1'] = 'overall_f1'
+            if 'auc' in overall_df.columns:
+                rename_map['auc'] = 'overall_auc'
+            if 'sensitivity' in overall_df.columns:
+                rename_map['sensitivity'] = 'overall_sensitivity'
+            if 'specificity' in overall_df.columns:
+                rename_map['specificity'] = 'overall_specificity'
+            overall_df = overall_df.rename(columns=rename_map)
+            agg = agg.merge(overall_df, on=['tracer', 'task'], how='left')
 
         # Save
         per_fold_path = os.path.join(output_dir, 'summary_per_fold.csv')
